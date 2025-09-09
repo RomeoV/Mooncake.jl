@@ -279,9 +279,24 @@ end
 @is_primitive(
     MinimalCtx,
     Tuple{
-        typeof(BLAS.gemv!),Char,P,AbstractMatrix{P},AbstractVector{P},P,AbstractVector{P}
+        typeof(BLAS.gemv!),Char,P,AbstractVecOrMat{P},AbstractVector{P},P,AbstractVector{P}
     } where {P<:BlasRealFloat},
 )
+
+@inline function frule!!(
+    d::Dual{typeof(BLAS.gemv!)},
+    tA::Dual{Char},
+    alpha::Dual{P},
+    A_dA::Dual{<:AbstractVector{P}},
+    x_dx::Dual{<:AbstractVector{P}},
+    beta::Dual{P},
+    y_dy::Dual{<:AbstractVector{P}},
+) where {P<:BlasRealFloat}
+    Avec, dAvec = arrayify(A_dA)
+    return frule!!(
+        d, tA, alpha, Dual(reshape(Avec, :, 1), reshape(dAvec, :, 1)), x_dx, beta, y_dy
+    )
+end
 
 @inline function frule!!(
     ::Dual{typeof(BLAS.gemv!)},
@@ -315,6 +330,21 @@ end
     BLAS.gemv!(primal(tA), α, A, x, β, y)
 
     return y_dy
+end
+
+@inline function rrule!!(
+    _d::CoDual{typeof(BLAS.gemv!)},
+    _tA::CoDual{Char},
+    _alpha::CoDual{P},
+    _A::CoDual{<:AbstractVector{P}},
+    _x::CoDual{<:AbstractVector{P}},
+    _beta::CoDual{P},
+    _y::CoDual{<:AbstractVector{P}},
+) where {P<:BlasRealFloat}
+    Avec, dAvec = arrayify(_A)
+    return rrule!!(
+        _d, _tA, _alpha, CoDual(reshape(Avec, :, 1), reshape(dAvec, :, 1)), _x, _beta, _y
+    )
 end
 
 @inline function rrule!!(
@@ -585,10 +615,10 @@ end
         Char,
         Char,
         T,
-        AbstractMatrix{T},
-        AbstractMatrix{T},
+        AbstractVecOrMat{T},
+        AbstractVecOrMat{T},
         T,
-        AbstractMatrix{T},
+        AbstractVecOrMat{T},
     } where {T<:BlasRealFloat},
 )
 
@@ -597,10 +627,10 @@ function frule!!(
     transA::Dual{Char},
     transB::Dual{Char},
     alpha::Dual{T},
-    A_dA::Dual{<:AbstractMatrix{T}},
-    B_dB::Dual{<:AbstractMatrix{T}},
+    A_dA::Dual{<:AbstractVecOrMat{T}},
+    B_dB::Dual{<:AbstractVecOrMat{T}},
     beta::Dual{T},
-    C_dC::Dual{<:AbstractMatrix{T}},
+    C_dC::Dual{<:AbstractVecOrMat{T}},
 ) where {T<:BlasRealFloat}
     tA = primal(transA)
     tB = primal(transB)
@@ -637,10 +667,10 @@ function rrule!!(
     transA::CoDual{Char},
     transB::CoDual{Char},
     alpha::CoDual{T},
-    A::CoDual{<:AbstractMatrix{T}},
-    B::CoDual{<:AbstractMatrix{T}},
+    A::CoDual{<:AbstractVecOrMat{T}},
+    B::CoDual{<:AbstractVecOrMat{T}},
     beta::CoDual{T},
-    C::CoDual{<:AbstractMatrix{T}},
+    C::CoDual{<:AbstractVecOrMat{T}},
 ) where {T<:BlasRealFloat}
     tA = primal(transA)
     tB = primal(transB)
@@ -817,7 +847,7 @@ end
 @is_primitive(
     MinimalCtx,
     Tuple{
-        typeof(BLAS.syrk!),Char,Char,P,AbstractMatrix{P},P,AbstractMatrix{P}
+        typeof(BLAS.syrk!),Char,Char,P,AbstractVecOrMat{P},P,AbstractMatrix{P}
     } where {P<:BlasRealFloat}
 )
 function frule!!(
@@ -825,7 +855,7 @@ function frule!!(
     _uplo::Dual{Char},
     _t::Dual{Char},
     α_dα::Dual{P},
-    A_dA::Dual{<:AbstractMatrix{P}},
+    A_dA::Dual{<:AbstractVecOrMat{P}},
     β_dβ::Dual{P},
     C_dC::Dual{<:AbstractMatrix{P}},
 ) where {P<:BlasRealFloat}
@@ -855,7 +885,7 @@ function rrule!!(
     _uplo::CoDual{Char},
     _t::CoDual{Char},
     α_dα::CoDual{P},
-    A_dA::CoDual{<:AbstractMatrix{P}},
+    A_dA::CoDual{<:AbstractVecOrMat{P}},
     β_dβ::CoDual{P},
     C_dC::CoDual{<:AbstractMatrix{P}},
 ) where {P<:BlasRealFloat}
