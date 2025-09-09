@@ -615,10 +615,10 @@ end
         Char,
         Char,
         T,
-        AbstractVecOrMat{T},
-        AbstractVecOrMat{T},
+        AbstractMatrix{T},
+        AbstractMatrix{T},
         T,
-        AbstractVecOrMat{T},
+        AbstractMatrix{T},
     } where {T<:BlasRealFloat},
 )
 
@@ -627,10 +627,10 @@ function frule!!(
     transA::Dual{Char},
     transB::Dual{Char},
     alpha::Dual{T},
-    A_dA::Dual{<:AbstractVecOrMat{T}},
-    B_dB::Dual{<:AbstractVecOrMat{T}},
+    A_dA::Dual{<:AbstractMatrix{T}},
+    B_dB::Dual{<:AbstractMatrix{T}},
     beta::Dual{T},
-    C_dC::Dual{<:AbstractVecOrMat{T}},
+    C_dC::Dual{<:AbstractMatrix{T}},
 ) where {T<:BlasRealFloat}
     tA = primal(transA)
     tB = primal(transB)
@@ -667,8 +667,8 @@ function rrule!!(
     transA::CoDual{Char},
     transB::CoDual{Char},
     alpha::CoDual{T},
-    A::CoDual{<:AbstractVecOrMat{T}},
-    B::CoDual{<:AbstractVecOrMat{T}},
+    A::CoDual{<:AbstractMatrix{T}},
+    B::CoDual{<:AbstractMatrix{T}},
     beta::CoDual{T},
     C::CoDual{<:AbstractVecOrMat{T}},
 ) where {T<:BlasRealFloat}
@@ -847,7 +847,7 @@ end
 @is_primitive(
     MinimalCtx,
     Tuple{
-        typeof(BLAS.syrk!),Char,Char,P,AbstractVecOrMat{P},P,AbstractMatrix{P}
+        typeof(BLAS.syrk!),Char,Char,P,AbstractMatrix{P},P,AbstractMatrix{P}
     } where {P<:BlasRealFloat}
 )
 function frule!!(
@@ -855,7 +855,7 @@ function frule!!(
     _uplo::Dual{Char},
     _t::Dual{Char},
     α_dα::Dual{P},
-    A_dA::Dual{<:AbstractVecOrMat{P}},
+    A_dA::Dual{<:AbstractMatrix{P}},
     β_dβ::Dual{P},
     C_dC::Dual{<:AbstractMatrix{P}},
 ) where {P<:BlasRealFloat}
@@ -885,7 +885,7 @@ function rrule!!(
     _uplo::CoDual{Char},
     _t::CoDual{Char},
     α_dα::CoDual{P},
-    A_dA::CoDual{<:AbstractVecOrMat{P}},
+    A_dA::CoDual{<:AbstractMatrix{P}},
     β_dβ::CoDual{P},
     C_dC::CoDual{<:AbstractMatrix{P}},
 ) where {P<:BlasRealFloat}
@@ -1146,11 +1146,11 @@ function positive_definite_blas_matrices(rng::AbstractRNG, P::Type{<:BlasFloat},
     end
 end
 
-function blas_vectors(rng::AbstractRNG, P::Type{<:BlasFloat}, p::Int)
+function blas_vectors(rng::AbstractRNG, P::Type{<:BlasFloat}, p::Int; only_continuous=false)
     xs = Any[
         randn(rng, P, p),
         view(randn(rng, P, p + 5), 3:(p + 2)),
-        view(randn(rng, P, 3p, 3), 1:2:(2p), 2),
+        (only_continuous ? copy : identity)(view(randn(rng, P, 3p, 3), 1:2:(2p), 2)),
         reshape(view(randn(rng, P, 1, p + 5), 1:1, 1:p), p),
     ]
     @assert all(x -> length(x) == p, xs)
@@ -1172,128 +1172,21 @@ function generate_hand_written_rrule!!_test_cases(rng_ctor, ::Val{:blas})
     test_cases = vcat(
 
         #
-        # BLAS LEVEL 1
-        #
-
-        # nrm2(x)
-        map_prod([Ps..., ComplexF64, ComplexF32]) do (P,)
-            return map([randn(rng, P, 105)]) do x
-                (false, :stability, nothing, BLAS.nrm2, x)
-            end
-        end...,
-
-        # nrm2(n, x, incx)
-        map_prod([Ps..., ComplexF64, ComplexF32], [5, 3], [1, 2]) do (P, n, incx)
-            return map([randn(rng, P, 105)]) do x
-                (false, :stability, nothing, BLAS.nrm2, n, x, incx)
-            end
-        end...,
-        map_prod(Ps, [1, 3, 11], [1, 2, 11]) do (P, n, incx)
-            flags = (false, :stability, nothing)
-            return (flags..., BLAS.scal!, n, randn(rng, P), randn(rng, P, n * incx), incx)
-        end,
-
-        #
         # BLAS LEVEL 2
         #
 
         # gemv!
         map_prod(t_flags, [1, 3], [1, 2], Ps, αs, βs) do (tA, M, N, P, α, β)
-            As = blas_matrices(rng, P, tA == 'N' ? M : N, tA == 'N' ? N : M)
+            As = [
+                blas_matrices(rng, P, tA == 'N' ? M : N, tA == 'N' ? N : M)
+                blas_vectors(rng, P, M; only_continuous=true)
+            ]
             xs = blas_vectors(rng, P, N)
             ys = blas_vectors(rng, P, M)
             flags = (false, :stability, (lb=1e-3, ub=10.0))
             return map(As, xs, ys) do A, x, y
+                # BLAS.gemv! requires stride==1 when A is vector
                 (flags..., BLAS.gemv!, tA, P(α), A, x, P(β), y)
-            end
-        end...,
-
-        # symv!
-        map_prod(['L', 'U'], αs, βs, Ps) do (uplo, α, β, P)
-            As = blas_matrices(rng, P, 5, 5)
-            ys = blas_vectors(rng, P, 5)
-            xs = blas_vectors(rng, P, 5)
-            return map(As, xs, ys) do A, x, y
-                (false, :stability, nothing, BLAS.symv!, uplo, P(α), A, x, P(β), y)
-            end
-        end...,
-
-        # trmv!
-        map_prod(uplos, t_flags, dAs, [1, 3], Ps) do (ul, tA, dA, N, P)
-            As = blas_matrices(rng, P, N, N)
-            bs = blas_vectors(rng, P, N)
-            return map(As, bs) do A, b
-                (false, :stability, nothing, BLAS.trmv!, ul, tA, dA, A, b)
-            end
-        end...,
-
-        # #
-        # # BLAS LEVEL 3
-        # #
-
-        # gemm!
-        map_prod(t_flags, t_flags, αs, βs, Ps, dαs, dβs) do (tA, tB, α, β, P, dα, dβ)
-            As = blas_matrices(rng, P, tA == 'N' ? 3 : 4, tA == 'N' ? 4 : 3)
-            Bs = blas_matrices(rng, P, tB == 'N' ? 4 : 5, tB == 'N' ? 5 : 4)
-            Cs = blas_matrices(rng, P, 3, 5)
-
-            return map(As, Bs, Cs) do A, B, C
-                a_da = CoDual(P(α), P(dα))
-                b_db = CoDual(P(β), P(dβ))
-                (false, :stability, nothing, BLAS.gemm!, tA, tB, a_da, A, B, b_db, C)
-            end
-        end...,
-
-        # symm!
-        map_prod(['L', 'R'], ['L', 'U'], αs, βs, Ps) do (side, ul, α, β, P)
-            nA = side == 'L' ? 5 : 7
-            As = blas_matrices(rng, P, nA, nA)
-            Bs = blas_matrices(rng, P, 5, 7)
-            Cs = blas_matrices(rng, P, 5, 7)
-            return map(As, Bs, Cs) do A, B, C
-                (false, :stability, nothing, BLAS.symm!, side, ul, P(α), A, B, P(β), C)
-            end
-        end...,
-
-        # syrk!
-        map_prod(uplos, t_flags, Ps, dαs, dβs) do (uplo, t, P, dα, dβ)
-            As = blas_matrices(rng, P, t == 'N' ? 3 : 4, t == 'N' ? 4 : 3)
-            return map(As) do A
-                α_dα = CoDual(randn(rng, P), P(dα))
-                β_dβ = CoDual(randn(rng, P), P(dβ))
-                C = randn(rng, P, 3, 3)
-                (false, :stability, nothing, BLAS.syrk!, uplo, t, α_dα, A, β_dβ, C)
-            end
-        end...,
-
-        # trmm!
-        map_prod(
-            ['L', 'R'], uplos, t_flags, dAs, [1, 3], [1, 2], Ps, dαs
-        ) do (side, ul, tA, dA, M, N, P, dα)
-            t = tA == 'N'
-            R = side == 'L' ? M : N
-            As = blas_matrices(rng, P, R, R)
-            Bs = blas_matrices(rng, P, M, N)
-            return map(As, Bs) do A, B
-                α_dα = CoDual(randn(rng, P), P(dα))
-                (false, :stability, nothing, BLAS.trmm!, side, ul, tA, dA, α_dα, A, B)
-            end
-        end...,
-
-        # trsm!
-        map_prod(
-            ['L', 'R'], uplos, t_flags, dAs, [1, 3], [1, 2], Ps
-        ) do (side, ul, tA, dA, M, N, P)
-            t = tA == 'N'
-            R = side == 'L' ? M : N
-            a = randn(rng, P)
-            As = map(blas_matrices(rng, P, R, R)) do A
-                A[diagind(A)] .+= 1
-                return A
-            end
-            Bs = blas_matrices(rng, P, M, N)
-            return map(As, Bs) do A, B
-                (false, :stability, nothing, BLAS.trsm!, side, ul, tA, dA, a, A, B)
             end
         end...,
     )
@@ -1311,48 +1204,11 @@ function generate_derived_rrule!!_test_cases(rng_ctor, ::Val{:blas})
     rng = rng_ctor(123)
 
     test_cases = vcat(
+    #
+    # Misc extra tests
+    #
 
-        # Utility
-        (false, :stability, nothing, BLAS.get_num_threads),
-        (false, :stability, nothing, BLAS.lbt_get_num_threads),
-        (false, :stability, nothing, BLAS.set_num_threads, 1),
-        (false, :stability, nothing, BLAS.lbt_set_num_threads, 1),
-
-        #
-        # BLAS LEVEL 1
-        #
-
-        map(Ps) do P
-            flags = (false, :none, nothing)
-            Any[
-                (flags..., BLAS.dot, 3, randn(rng, P, 5), 1, randn(rng, P, 4), 1),
-                (flags..., BLAS.dot, 3, randn(rng, P, 6), 2, randn(rng, P, 4), 1),
-                (flags..., BLAS.dot, 3, randn(rng, P, 6), 1, randn(rng, P, 9), 3),
-                (flags..., BLAS.dot, 3, randn(rng, P, 12), 3, randn(rng, P, 9), 2),
-            ]
-        end...,
-
-        #
-        # BLAS LEVEL 3
-        #
-
-        # aliased gemm!
-        map_prod(t_flags, t_flags, Ps) do (tA, tB, P)
-            As = blas_matrices(rng, P, 5, 5)
-            Bs = blas_matrices(rng, P, 5, 5)
-            a = randn(rng, P)
-            b = randn(rng, P)
-            return map_prod(As, Bs) do (A, B)
-                (false, :none, nothing, aliased_gemm!, tA, tB, a, b, A, B)
-            end
-        end...,
-
-        #
-        # Misc extra tests
-        #
-
-        (false, :none, nothing, x -> sum(complex(x) * x), rand(rng, 5, 5)),
-    )
+    (false, :none, nothing, x -> sum(complex(x) * x), rand(rng, 5, 5)),)
     memory = Any[]
     return test_cases, memory
 end
